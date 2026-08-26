@@ -40,7 +40,7 @@ The installer registers a per-user task that reconnects automatically whenever y
 Start-ScheduledTask -TaskName "Poke Gate"
 ```
 
-If Poke's normal sign-in is unavailable, create a Poke account key at [poke.com/kitchen/api-keys](https://poke.com/kitchen/api-keys). Do not create a new MCP integration. Then run the local setup prompt so the key is saved directly on the computer and never sent through chat:
+On first start, Poke opens its device-approval page in Chrome. Approve that login and the gateway connects automatically. If device login is unavailable, create a Poke account key at [poke.com/kitchen/api-keys](https://poke.com/kitchen/api-keys). Do not create a new MCP integration. Then run the local setup prompt so the key is validated and saved directly on the computer without being sent through chat:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\Poke Gate\app\scripts\configure-poke-api-key.ps1"
@@ -50,7 +50,7 @@ The setup prompt restricts the credential file to the current Windows account an
 
 ```powershell
 Get-ScheduledTask -TaskName "Poke Gate"
-Get-Content "$env:LOCALAPPDATA\Poke Gate\logs\poke-gate.log" -Tail 20
+Get-Content "$env:LOCALAPPDATA\Poke Gate\logs\gateway.log" -Tail 20
 ```
 
 To stop it for the current session:

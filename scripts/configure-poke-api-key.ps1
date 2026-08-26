@@ -30,6 +30,19 @@ try {
     throw "No API key was entered."
   }
 
+  try {
+    $profileResponse = Invoke-WebRequest `
+      -Uri "https://poke.com/api/v1/user/profile" `
+      -Headers @{ Authorization = ("Bearer " + $apiKey.Trim()) } `
+      -UseBasicParsing `
+      -TimeoutSec 15
+    if ([int]$profileResponse.StatusCode -ne 200) {
+      throw "Poke returned HTTP $([int]$profileResponse.StatusCode)."
+    }
+  } catch {
+    throw "Poke rejected this key. Create an account key at https://poke.com/kitchen/api-keys, not an MCP Integration key."
+  }
+
   $credentialsDirectory = Join-Path $env:USERPROFILE ".config\poke"
   $credentialsPath = Join-Path $credentialsDirectory "credentials.json"
   New-Item -ItemType Directory -Path $credentialsDirectory -Force | Out-Null
@@ -54,6 +67,7 @@ try {
   }
 
   $apiKey = $null
+  $profileResponse = $null
   $credentialsJson = $null
   Write-Host ""
   Write-Host "Poke Gate is configured and has been restarted." -ForegroundColor Green
