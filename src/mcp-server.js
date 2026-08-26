@@ -1,10 +1,15 @@
 import http from "node:http";
 import { randomBytes } from "node:crypto";
-import { exec } from "node:child_process";
-import { readFileSync, writeFileSync, readdirSync, statSync, existsSync, symlinkSync, lstatSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { readFileSync, writeFileSync, readdirSync, statSync, existsSync, unlinkSync } from "node:fs";
 import { hostname, platform, arch, uptime, totalmem, freemem, homedir } from "node:os";
-import { join, resolve, extname } from "node:path";
+import { join, extname } from "node:path";
 import { PermissionService } from "./permission-service.js";
+import { CodexRunManager } from "./codex-runner.js";
+import { getPlatformPaths, resolveUserPath } from "./platform-paths.js";
+import { buildShellInvocation } from "./command-runner.js";
+import { captureScreenshot } from "./take-screenshot.js";
+import { buildWindowsHostInvocation } from "./windows-host.js";
 
 const SERVER_INFO = { name: "poke-gate", version: "0.0.1" };
 
@@ -18,10 +23,12 @@ let logEnabled = false;
 
 const permissionSecret = process.env.POKE_GATE_HMAC_SECRET || randomBytes(32).toString("hex");
 const permissionService = new PermissionService({ secret: permissionSecret });
+const codexRunManager = new CodexRunManager();
+const platformPaths = getPlatformPaths();
 const sessionAutoApproveAllRisky = new Set();
 const runCommandLoopState = new Map();
 
-const SAFE_TOOL_NAMES = new Set(["read_file", "read_image", "list_directory", "system_info", "network_speed"]);
+const SAFE_TOOL_NAMES = new Set(["read_file", "read_image", "list_directory", "system_info", "network_speed", "get_agent_run"]);
 
 const DESTRUCTIVE_COMMAND_PATTERNS = [
   /\brm\b/i,
@@ -29,7 +36,13 @@ const DESTRUCTIVE_COMMAND_PATTERNS = [
   /\bunlink\b/i,
   /\bmkfs\b/i,
   /\bdiskutil\s+erase/i,
+  /\b(?:remove-item|clear-item|clear-content|remove-itemproperty|clear-itemproperty)\b/i,
+  /\b(?:format-volume|clear-disk|initialize-disk|remove-partition)\b/i,
+  /\breg(?:\.exe)?\s+(?:add|delete|import|restore|load|unload)\b/i,
+  /\b(?:diskpart|format\.com|bcdedit|shutdown\.exe)\b/i,
+  /\bstart-process\b[^\n]*\b-verb\s+runas\b/i,
   />\s*\//,
+  /(^|\s)>(?!>)/,
 ];
 
 const LIMITED_RUN_COMMANDS = new Set([
@@ -48,6 +61,20 @@ const SANDBOX_RUN_COMMANDS = new Set([
   "which", "command", "echo", "stat", "du", "df", "ps", "uname", "sw_vers", "whoami",
 ]);
 
+const WINDOWS_LIMITED_RUN_COMMANDS = new Set([
+  "get-childitem", "dir", "ls", "get-location", "pwd", "get-content", "cat", "type",
+  "select-string", "get-item", "get-itemproperty", "test-path", "resolve-path",
+  "get-process", "get-service", "get-computerinfo", "get-ciminstance",
+  "where.exe", "whoami", "hostname", "ipconfig", "ping", "tracert", "nslookup",
+  "curl.exe", "findstr", "fc", "sort", "more",
+]);
+
+const WINDOWS_SANDBOX_RUN_COMMANDS = new Set([
+  ...WINDOWS_LIMITED_RUN_COMMANDS,
+  "node", "node.exe", "python", "python.exe", "py", "ffmpeg", "ffmpeg.exe", "ffprobe", "ffprobe.exe",
+  "new-item", "set-content", "add-content", "copy-item", "move-item", "remove-item",
+]);
+
 const DANGEROUS_COMMAND_PATTERNS = [
   /(^|\s)sudo(\s|$)/i,
   /rm\s+-rf\b/i,
@@ -60,6 +87,11 @@ const DANGEROUS_COMMAND_PATTERNS = [
   /launchctl\s+bootout/i,
   /chmod\s+777/i,
   /curl\s+[^\n]*\|\s*(sh|bash|zsh)/i,
+  /\b(?:format-volume|clear-disk|initialize-disk|remove-partition|diskpart|format\.com|bcdedit)\b/i,
+  /\breg(?:\.exe)?\s+(?:add|delete|import|restore|load|unload)\b/i,
+  /\bstart-process\b[^\n]*\b-verb\s+runas\b/i,
+  /\b(?:invoke-expression|iex)\b/i,
+  /-(?:encodedcommand|enc)\b/i,
 ];
 
 function normalizePermissionMode(value) {
@@ -98,6 +130,7 @@ const TOOLS = [
       type: "object",
       properties: {
         command: { type: "string", description: "The shell command to execute" },
+        shell: { type: "string", enum: ["powershell", "cmd"], description: "Windows shell (optional; defaults to PowerShell on Windows)" },
         cwd: { type: "string", description: "Working directory (optional, defaults to home)" },
         approval_token: { type: "string", description: "Approval token returned by a previous AWAITING_APPROVAL response" },
         approve: { type: "boolean", description: "Set true after user approves in chat" },
@@ -181,23 +214,51 @@ const TOOLS = [
   {
     name: "run_agent",
     description:
-      "Run a Poke Gate agent by name. Agents are scheduled scripts in ~/.config/poke-gate/agents/. " +
-      "Use this to manually trigger an agent — it will execute and send its results to you.",
+      "Start a non-interactive Codex run through the local T3 Code/Codex installation. " +
+      "The run uses a workspace-write Codex sandbox and defaults to the user's Documents folder. " +
+      "Returns immediately with a run ID; use get_agent_run to inspect progress and results.",
     inputSchema: {
       type: "object",
       properties: {
-        name: { type: "string", description: "Agent name (e.g. 'beeper', 'battery', 'context')" },
+        prompt: { type: "string", description: "Task for Codex to complete" },
+        cwd: { type: "string", description: "Working directory (optional, defaults to the user's Documents folder)" },
+        approval_token: { type: "string", description: "Approval token returned by a previous AWAITING_APPROVAL response" },
+        approve: { type: "boolean", description: "Set true after user approves in chat" },
       },
-      required: ["name"],
+      required: ["prompt"],
+    },
+  },
+  {
+    name: "get_agent_run",
+    description: "Get the current status and captured output of a Codex run started by run_agent.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Run ID returned by run_agent" },
+      },
+      required: ["id"],
+    },
+  },
+  {
+    name: "cancel_agent_run",
+    description: "Cancel a running Codex run.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "Run ID returned by run_agent" },
+        approval_token: { type: "string", description: "Approval token returned by a previous AWAITING_APPROVAL response" },
+        approve: { type: "boolean", description: "Set true after user approves in chat" },
+      },
+      required: ["id"],
     },
   },
   {
     name: "take_screenshot",
-    description: "Take a screenshot of the user's screen and save it to a file. Returns the file path. Requires screen recording permission on macOS.",
+    description: "Capture all displays as a PNG. Returns the image directly and optionally saves it to a requested path.",
     inputSchema: {
       type: "object",
       properties: {
-        path: { type: "string", description: "File path to save the screenshot (optional, defaults to ~/Desktop/screenshot-<timestamp>.png)" },
+        path: { type: "string", description: "PNG file path to persist the screenshot (optional; otherwise a temporary file is used)" },
         approval_token: { type: "string", description: "Approval token returned by a previous AWAITING_APPROVAL response" },
         approve: { type: "boolean", description: "Set true after user approves in chat" },
         remember_all_risky: { type: "boolean", description: "If true, auto-approve all risky tools for this session" },
@@ -235,7 +296,11 @@ function buildApprovalResponse(name, cleanArgs, approval) {
     ? `Run command: ${cleanArgs.command}`
     : name === "write_file"
       ? `Write file: ${cleanArgs.path}`
-      : "Take screenshot";
+      : name === "run_agent"
+        ? `Start Codex in ${cleanArgs.cwd || "Documents"}: ${cleanArgs.prompt}`
+        : name === "cancel_agent_run"
+          ? `Cancel Codex run: ${cleanArgs.id}`
+          : "Take screenshot";
 
   return {
     content: [{
@@ -266,7 +331,7 @@ function buildPolicyDeniedResponse(message) {
 
 function splitCommandSegments(commandText) {
   return commandText
-    .split(/&&|\|\||;|\n/)
+    .split(/&&|\|\||[;&|\n]/)
     .map((segment) => segment.trim())
     .filter(Boolean);
 }
@@ -278,7 +343,7 @@ function extractExecutable(segment) {
   if (!match) return "";
   const raw = match[1];
   const parts = raw.split("/");
-  return parts[parts.length - 1];
+  return parts[parts.length - 1].toLowerCase();
 }
 
 function hasDangerousPattern(commandText) {
@@ -287,6 +352,7 @@ function hasDangerousPattern(commandText) {
 
 function isDestructiveInFullMode(name, cleanArgs) {
   if (name === "write_file") return true;
+  if (name === "run_agent" || name === "cancel_agent_run") return true;
   if (name === "run_command") {
     const cmd = typeof cleanArgs.command === "string" ? cleanArgs.command : "";
     return DESTRUCTIVE_COMMAND_PATTERNS.some((p) => p.test(cmd));
@@ -294,13 +360,20 @@ function isDestructiveInFullMode(name, cleanArgs) {
   return false;
 }
 
-function validateRunCommandAgainstAllowlist(commandText, allowlist) {
+function validateRunCommandAgainstAllowlist(commandText, allowlist, options = {}) {
   if (typeof commandText !== "string" || commandText.trim().length === 0) {
     return "Command is empty.";
   }
 
   if (hasDangerousPattern(commandText)) {
     return "Command matches a dangerous pattern.";
+  }
+
+  if (options.platformName === "win32" && /\$\(|`|--%|(^|\s)&\s*[$(]/.test(commandText)) {
+    return "Dynamic PowerShell invocation is not permitted in this mode.";
+  }
+  if (/[<>]/.test(commandText)) {
+    return "Shell redirection is not permitted in this mode.";
   }
 
   const segments = splitCommandSegments(commandText);
@@ -314,13 +387,15 @@ function validateRunCommandAgainstAllowlist(commandText, allowlist) {
   return null;
 }
 
-export function evaluateAccessPolicy(toolName, cleanArgs, mode = PERMISSION_MODE) {
+export function evaluateAccessPolicy(toolName, cleanArgs, mode = PERMISSION_MODE, platformName = platform()) {
   if (mode === "full") return null;
 
   if (mode === "limited") {
     if (SAFE_TOOL_NAMES.has(toolName)) return null;
+    if (toolName === "run_agent" || toolName === "cancel_agent_run") return null;
     if (toolName === "run_command") {
-      return validateRunCommandAgainstAllowlist(cleanArgs.command, LIMITED_RUN_COMMANDS);
+      const allowlist = platformName === "win32" ? WINDOWS_LIMITED_RUN_COMMANDS : LIMITED_RUN_COMMANDS;
+      return validateRunCommandAgainstAllowlist(cleanArgs.command, allowlist, { platformName });
     }
     if (toolName === "write_file" || toolName === "take_screenshot") {
       return "This tool is disabled in Limited Permissions mode.";
@@ -329,9 +404,11 @@ export function evaluateAccessPolicy(toolName, cleanArgs, mode = PERMISSION_MODE
   }
 
   if (SAFE_TOOL_NAMES.has(toolName)) return null;
+  if (toolName === "run_agent" || toolName === "cancel_agent_run") return null;
 
   if (toolName === "run_command") {
-    return validateRunCommandAgainstAllowlist(cleanArgs.command, SANDBOX_RUN_COMMANDS);
+    const allowlist = platformName === "win32" ? WINDOWS_SANDBOX_RUN_COMMANDS : SANDBOX_RUN_COMMANDS;
+    return validateRunCommandAgainstAllowlist(cleanArgs.command, allowlist, { platformName });
   }
 
   if (toolName === "write_file" || toolName === "take_screenshot") {
@@ -452,30 +529,60 @@ export function buildSandboxWrappedCommand(command) {
 
 function runCommand(command, cwd, options = {}) {
   return new Promise((res) => {
-    const dir = cwd || homedir();
+    const dir = resolveUserPath(cwd, { paths: platformPaths, fallback: platformPaths.homeDir });
     const sandboxRequested = options.permissionMode === "sandbox";
-    const sandboxAvailable = existsSync(SANDBOX_EXEC_PATH);
-    const sandboxApplied = sandboxRequested && sandboxAvailable;
-    const commandToRun = sandboxApplied ? buildSandboxWrappedCommand(command) : command;
+    const windowsRestrictedRequested = platform() === "win32" &&
+      (options.permissionMode === "limited" || options.permissionMode === "sandbox");
+    const macSandboxApplied = sandboxRequested && platform() !== "win32" && existsSync(SANDBOX_EXEC_PATH);
+    const sandboxApplied = windowsRestrictedRequested || macSandboxApplied;
+    if (sandboxRequested && !sandboxApplied) {
+      res({
+        stdout: "",
+        stderr: "OS sandbox is unavailable; command was not run.",
+        exitCode: 1,
+        durationMs: 0,
+        timedOut: false,
+        sandboxApplied: false,
+      });
+      return;
+    }
+
+    let invocation;
+    try {
+      invocation = windowsRestrictedRequested
+        ? buildWindowsHostInvocation(command, {
+          policy: options.permissionMode,
+          shellName: options.shellName,
+          cwd: dir,
+          paths: platformPaths,
+          timeoutMs: COMMAND_TIMEOUT,
+        })
+        : macSandboxApplied
+        ? { executable: SANDBOX_EXEC_PATH, args: ["-p", buildSandboxProfile(), "/bin/zsh", "-lc", command] }
+        : buildShellInvocation(command, { shellName: options.shellName });
+    } catch (error) {
+      res({ stdout: "", stderr: error.message, exitCode: 1, durationMs: 0, timedOut: false, sandboxApplied: false });
+      return;
+    }
 
     const start = Date.now();
-    exec(commandToRun, {
+    execFile(invocation.executable, invocation.args, {
       cwd: dir,
-      timeout: COMMAND_TIMEOUT,
+      timeout: windowsRestrictedRequested ? COMMAND_TIMEOUT + 2_000 : COMMAND_TIMEOUT,
       maxBuffer: 1024 * 1024,
-      shell: true,
+      windowsHide: true,
     }, (error, stdout, stderr) => {
       const durationMs = Date.now() - start;
-      const note = sandboxRequested && !sandboxAvailable
-        ? "sandbox-exec unavailable; ran without OS sandbox"
-        : "";
 
       res({
         stdout: stdout.slice(0, 50_000),
-        stderr: `${stderr.slice(0, 10_000)}${note ? `${stderr ? "\n" : ""}${note}` : ""}`,
+        stderr: stderr.slice(0, 10_000),
         exitCode: error ? (error.code ?? 1) : 0,
         durationMs,
-        timedOut: Boolean(error?.killed && error?.signal === "SIGTERM"),
+        timedOut: Boolean(
+          (windowsRestrictedRequested && Number(error?.code) === 124) ||
+          (error?.killed && error?.signal === "SIGTERM"),
+        ),
         sandboxApplied,
       });
     });
@@ -509,43 +616,75 @@ function toMbps(bytes, seconds) {
   return (bytes * 8) / seconds / 1_000_000;
 }
 
-function runNetworkSpeedTests(testSelection = "both") {
+async function fetchWithTimeout(url, options, timeoutMs, fetchImpl) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetchImpl(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export async function runNetworkSpeedTests(testSelection = "both", options = {}) {
   const tests = typeof testSelection === "string" ? testSelection : "both";
   const runDownload = tests === "download" || tests === "both";
   const runUpload = tests === "upload" || tests === "both";
 
   if (!runDownload && !runUpload) {
-    return Promise.resolve({
+    return {
       content: [{ type: "text", text: "Invalid test selection. Use download, upload, or both." }],
       isError: true,
-    });
+    };
   }
 
-  const downloadBytes = 25 * 1024 * 1024;
-  const uploadBytes = 10 * 1024 * 1024;
-  const parts = [];
+  const downloadBytes = options.downloadBytes ?? 25 * 1024 * 1024;
+  const uploadBytes = options.uploadBytes ?? 10 * 1024 * 1024;
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const now = options.now ?? (() => performance.now());
+  const timeoutMs = options.timeoutMs ?? COMMAND_TIMEOUT;
+  let dlSeconds = null;
+  let ulSeconds = null;
+  let dlMbps = null;
+  let ulMbps = null;
+  const errors = [];
 
   if (runDownload) {
-    parts.push(`DL=$(curl -s -o /dev/null -w '%{time_total}' 'https://speed.cloudflare.com/__down?bytes=${downloadBytes}')`);
+    try {
+      const startedAt = now();
+      const response = await fetchWithTimeout(
+        `https://speed.cloudflare.com/__down?bytes=${downloadBytes}`,
+        {},
+        timeoutMs,
+        fetchImpl,
+      );
+      if (!response.ok) throw new Error(`download endpoint returned HTTP ${response.status}`);
+      const body = await response.arrayBuffer();
+      dlSeconds = (now() - startedAt) / 1000;
+      dlMbps = toMbps(body.byteLength, dlSeconds);
+    } catch (error) {
+      errors.push(`download: ${error.message}`);
+    }
   }
+
   if (runUpload) {
-    parts.push("TMP=$(mktemp /tmp/poke-speed.XXXXXX)");
-    parts.push(`dd if=/dev/zero of="$TMP" bs=1m count=${Math.floor(uploadBytes / (1024 * 1024))} 2>/dev/null`);
-    parts.push("UL=$(curl -s -o /dev/null -w '%{time_total}' -X POST --data-binary @\"$TMP\" 'https://speed.cloudflare.com/__up')");
-    parts.push("rm -f \"$TMP\"");
+    try {
+      const uploadBody = Buffer.alloc(uploadBytes);
+      const startedAt = now();
+      const response = await fetchWithTimeout(
+        "https://speed.cloudflare.com/__up",
+        { method: "POST", body: uploadBody },
+        timeoutMs,
+        fetchImpl,
+      );
+      if (!response.ok) throw new Error(`upload endpoint returned HTTP ${response.status}`);
+      await response.arrayBuffer();
+      ulSeconds = (now() - startedAt) / 1000;
+      ulMbps = toMbps(uploadBytes, ulSeconds);
+    } catch (error) {
+      errors.push(`upload: ${error.message}`);
+    }
   }
-  parts.push("printf 'DL=%s\nUL=%s\n' \"${DL:-}\" \"${UL:-}\"");
-
-  const cmd = parts.join(" && ");
-
-  return runCommand(cmd, homedir(), { permissionMode: "full" }).then((result) => {
-    const raw = String(result.stdout || "");
-    const dlMatch = raw.match(/DL=([^\n]*)/);
-    const ulMatch = raw.match(/UL=([^\n]*)/);
-    const dlSeconds = dlMatch && dlMatch[1] ? Number.parseFloat(dlMatch[1]) : NaN;
-    const ulSeconds = ulMatch && ulMatch[1] ? Number.parseFloat(ulMatch[1]) : NaN;
-    const dlMbps = runDownload ? toMbps(downloadBytes, dlSeconds) : null;
-    const ulMbps = runUpload ? toMbps(uploadBytes, ulSeconds) : null;
 
     const lines = ["Network Speed Test"]; 
     if (runDownload) {
@@ -569,13 +708,12 @@ function runNetworkSpeedTests(testSelection = "both") {
       },
     };
 
-    if (result.exitCode !== 0 || (runDownload && dlMbps === null) || (runUpload && ulMbps === null)) {
+    if (errors.length > 0 || (runDownload && dlMbps === null) || (runUpload && ulMbps === null)) {
       response.isError = true;
-      response.content[0].text += `\n\nDetails: ${result.stderr || "speed test command failed"}`;
+      response.content[0].text += `\n\nDetails: ${errors.join("; ") || "speed test failed"}`;
     }
 
     return response;
-  });
 }
 
 function handleToolCall(name, args, context = {}) {
@@ -609,15 +747,11 @@ function handleToolCall(name, args, context = {}) {
         return buildApprovalResponse(name, cleanArgs, approval);
       }
 
-      if (PERMISSION_MODE === "full") {
+      if (name === "run_command" && args.remember_in_session === true && commandText) {
+        permissionService.allowPatternForSession(sessionId, commandText);
+      }
+      if (args.remember_all_risky === true) {
         sessionAutoApproveAllRisky.add(sessionId);
-      } else {
-        if (name === "run_command" && args.remember_in_session === true && commandText) {
-          permissionService.allowPatternForSession(sessionId, commandText);
-        }
-        if (args.remember_all_risky === true) {
-          sessionAutoApproveAllRisky.add(sessionId);
-        }
       }
     }
   }
@@ -640,7 +774,10 @@ function handleToolCall(name, args, context = {}) {
       }
 
       logTool(name, cleanArgs);
-      return runCommand(cleanArgs.command, cleanArgs.cwd, { permissionMode: PERMISSION_MODE }).then((result) => {
+      return runCommand(cleanArgs.command, cleanArgs.cwd, {
+        permissionMode: PERMISSION_MODE,
+        shellName: cleanArgs.shell,
+      }).then((result) => {
         recordRunCommandOutcome(sessionId, cleanArgs, result);
         logCommandPreview(cleanArgs, result);
         const r = { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
@@ -652,7 +789,7 @@ function handleToolCall(name, args, context = {}) {
 
     case "read_file": {
       try {
-        const p = resolve(cleanArgs.path.replace(/^~/, homedir()));
+        const p = resolveUserPath(cleanArgs.path, { paths: platformPaths });
         const text = readFileSync(p, "utf-8");
         const r = { content: [{ type: "text", text: text.slice(0, 100_000) }] };
         logTool(name, cleanArgs, r);
@@ -666,7 +803,7 @@ function handleToolCall(name, args, context = {}) {
 
     case "write_file": {
       try {
-        const p = resolve(cleanArgs.path.replace(/^~/, homedir()));
+        const p = resolveUserPath(cleanArgs.path, { paths: platformPaths });
         writeFileSync(p, cleanArgs.content);
         const r = { content: [{ type: "text", text: `Written to ${p}` }] };
         logTool(name, cleanArgs, r);
@@ -680,7 +817,7 @@ function handleToolCall(name, args, context = {}) {
 
     case "list_directory": {
       try {
-        const dir = resolve((cleanArgs.path || "~").replace(/^~/, homedir()));
+        const dir = resolveUserPath(cleanArgs.path, { paths: platformPaths });
         const entries = readdirSync(dir).map((entry) => {
           try {
             const s = statSync(join(dir, entry));
@@ -716,7 +853,7 @@ function handleToolCall(name, args, context = {}) {
 
     case "read_image": {
       try {
-        const p = resolve(cleanArgs.path.replace(/^~/, homedir()));
+        const p = resolveUserPath(cleanArgs.path, { paths: platformPaths });
         const ext = extname(p).toLowerCase().slice(1);
         const mimeMap = {
           png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg",
@@ -749,48 +886,63 @@ function handleToolCall(name, args, context = {}) {
     }
 
     case "run_agent": {
-      const agentName = args.name;
-      logTool(name, { name: agentName });
-      const agentsDir = join(homedir(), ".config", "poke-gate", "agents");
-
-      // Ensure node_modules symlink so agents can import poke
-      const pkgNodeModules = join(new URL(".", import.meta.url).pathname, "..", "node_modules");
-      const agentNodeModules = join(agentsDir, "node_modules");
-      if (existsSync(pkgNodeModules)) {
-        try {
-          const s = lstatSync(agentNodeModules);
-          if (!s.isSymbolicLink()) throw new Error();
-        } catch {
-          try { symlinkSync(pkgNodeModules, agentNodeModules, "junction"); } catch {}
-        }
+      try {
+        const run = codexRunManager.start({ prompt: cleanArgs.prompt, cwd: cleanArgs.cwd });
+        logTool(name, { prompt: cleanArgs.prompt, cwd: run.cwd });
+        return {
+          content: [{
+            type: "text",
+            text: `Codex run started. Run ID: ${run.id}\nWorking directory: ${run.cwd}\nUse get_agent_run with this ID to check progress.`,
+          }],
+          structuredContent: run,
+        };
+      } catch (err) {
+        const r = { content: [{ type: "text", text: `Could not start Codex: ${err.message}` }], isError: true };
+        logTool(name, cleanArgs, r);
+        return r;
       }
+    }
 
-      let files;
-      try { files = readdirSync(agentsDir).filter((f) => f.endsWith(".js") && f.startsWith(agentName + ".")); } catch { files = []; }
-      if (files.length === 0) {
-        let available = [];
-        try { available = readdirSync(agentsDir).filter(f => f.endsWith(".js")).map(f => f.split(".")[0]); } catch {}
-        return { content: [{ type: "text", text: `Agent "${agentName}" not found. Available: ${available.join(", ") || "none"}` }], isError: true };
+    case "get_agent_run": {
+      const run = codexRunManager.get(cleanArgs.id);
+      if (!run) {
+        return { content: [{ type: "text", text: `Codex run not found: ${cleanArgs.id}` }], isError: true };
       }
-      const agentFile = join(agentsDir, files[0]);
-      return runCommand(`node "${agentFile}"`, agentsDir).then((result) => {
-        const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
-        if (result.exitCode === 0) {
-          return { content: [{ type: "text", text: `Agent "${agentName}" completed.\n${output || "No output."}` }] };
-        }
-        return { content: [{ type: "text", text: `Agent "${agentName}" failed (exit ${result.exitCode}).\n${output}` }], isError: true };
-      });
+      return {
+        content: [{ type: "text", text: JSON.stringify(run, null, 2) }],
+        structuredContent: run,
+      };
+    }
+
+    case "cancel_agent_run": {
+      const run = codexRunManager.cancel(cleanArgs.id);
+      if (!run) {
+        return { content: [{ type: "text", text: `Codex run not found: ${cleanArgs.id}` }], isError: true };
+      }
+      return {
+        content: [{ type: "text", text: `Codex run ${run.id} is ${run.status}.` }],
+        structuredContent: run,
+      };
     }
 
     case "take_screenshot": {
       logTool(name, cleanArgs);
-
-      return runCommand("npx -y poke-gate@latest take-screenshot", homedir(), { permissionMode: "full" }).then((result) => {
-        if (result.exitCode === 0) {
-          return { content: [{ type: "text", text: "Screenshot captured and sent to Poke." }] };
+      let screenshot;
+      try {
+        screenshot = captureScreenshot({ path: cleanArgs.path });
+        return {
+          content: [
+            { type: "image", data: screenshot.png.toString("base64"), mimeType: "image/png" },
+            { type: "text", text: cleanArgs.path ? `Screenshot saved to ${screenshot.path}` : "Screenshot captured." },
+          ],
+        };
+      } catch (error) {
+        return { content: [{ type: "text", text: `Screenshot failed: ${error.message}` }], isError: true };
+      } finally {
+        if (screenshot?.temporary) {
+          try { unlinkSync(screenshot.path); } catch {}
         }
-        return { content: [{ type: "text", text: `Screenshot failed: ${result.stderr || result.stdout || "unknown error"}` }], isError: true };
-      });
+      }
     }
 
     default:

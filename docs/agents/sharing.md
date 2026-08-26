@@ -4,7 +4,7 @@ Built a useful agent? Share it with the community by opening a pull request.
 
 ## How sharing works
 
-Community agents live in the [`examples/agents/`](https://github.com/f/poke-gate/tree/main/examples/agents) directory of the Poke Gate repository. Anyone can install them with:
+Community agents live in the [`examples/agents/`](https://github.com/alextyhwang/poke-gate/tree/main/examples/agents) directory of the Poke Gate repository. Anyone can install them with:
 
 ```bash
 npx poke-gate agent get <name>
@@ -14,7 +14,7 @@ npx poke-gate agent get <name>
 
 ### 1. Fork the repo
 
-Go to [github.com/f/poke-gate](https://github.com/f/poke-gate) and click **Fork**.
+Go to [github.com/alextyhwang/poke-gate](https://github.com/alextyhwang/poke-gate) and click **Fork**.
 
 ### 2. Add your agent files
 
@@ -77,7 +77,7 @@ git commit -m "agent: add your-agent"
 git push origin agent/your-agent
 ```
 
-Then open the PR at [github.com/f/poke-gate/compare](https://github.com/f/poke-gate/compare).
+Then open the PR at [github.com/alextyhwang/poke-gate/compare](https://github.com/alextyhwang/poke-gate/compare).
 
 ## Agent ideas
 

@@ -6,21 +6,60 @@
 
 <p align="center">
   Let your <a href="https://poke.com">Poke</a> AI assistant access your machine.<br>
-  <sub>A community project — not affiliated with Poke or The Interaction Company.</sub>
+  <sub>Windows-first fork maintained by <a href="https://github.com/alextyhwang">Alex Wang</a> — not affiliated with Poke or The Interaction Company.</sub>
 </p>
 
 <p align="center">
-  <a href="https://github.com/f/poke-gate/releases/latest"><img src="https://img.shields.io/github/v/release/f/poke-gate?style=flat-square" alt="Latest Release"></a>
+  <a href="https://github.com/alextyhwang/poke-gate/releases/latest"><img src="https://img.shields.io/github/v/release/alextyhwang/poke-gate?style=flat-square" alt="Latest Release"></a>
   <a href="https://www.npmjs.com/package/poke-gate"><img src="https://img.shields.io/npm/v/poke-gate?style=flat-square" alt="npm"></a>
-  <a href="https://github.com/f/poke-gate/blob/main/LICENSE"><img src="https://img.shields.io/github/license/f/poke-gate?style=flat-square" alt="License"></a>
-  <img src="https://img.shields.io/badge/platform-macOS%2015%2B-blue?style=flat-square" alt="Platform">
+  <a href="https://github.com/alextyhwang/poke-gate/blob/main/LICENSE"><img src="https://img.shields.io/github/license/alextyhwang/poke-gate?style=flat-square" alt="License"></a>
+  <img src="https://img.shields.io/badge/platform-Windows%2010%2B%20%7C%20macOS-blue?style=flat-square" alt="Platform">
 </p>
 
 ---
 
-Run Poke Gate on your Mac, then message Poke from iMessage, Telegram, or SMS to run commands, read files, take screenshots, and more — all on your machine.
+Run Poke Gate on your computer, then message Poke from iMessage, Telegram, or SMS to run commands, read files, take screenshots, and start Codex tasks — all on your machine.
 
 ## Install
+
+**Windows 10/11**
+
+From Windows PowerShell in a checkout with `npm ci` completed:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-windows.ps1
+```
+
+This installs a private runtime and native security host under `%LOCALAPPDATA%\Poke Gate`, then registers a per-user background task at sign-in. Add `-StartNow` to start it immediately or `-InstallTray $true` for the optional notification-area controller. See [Windows deployment](docs/windows.md) for security and measured resource use.
+
+### Connect or reconnect on Windows
+
+The installer registers a per-user task that reconnects automatically whenever you sign in. To start it manually:
+
+```powershell
+Start-ScheduledTask -TaskName "Poke Gate"
+```
+
+If Poke's normal sign-in is unavailable, create a Poke account key at [poke.com/kitchen/api-keys](https://poke.com/kitchen/api-keys). Do not create a new MCP integration. Then run the local setup prompt so the key is saved directly on the computer and never sent through chat:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\Poke Gate\app\scripts\configure-poke-api-key.ps1"
+```
+
+The setup prompt restricts the credential file to the current Windows account and restarts the gateway. Check status and recent logs with:
+
+```powershell
+Get-ScheduledTask -TaskName "Poke Gate"
+Get-Content "$env:LOCALAPPDATA\Poke Gate\logs\poke-gate.log" -Tail 20
+```
+
+To stop it for the current session:
+
+```powershell
+Stop-ScheduledTask -TaskName "Poke Gate"
+```
+
+**macOS**
 
 **Homebrew** (recommended)
 
@@ -49,7 +88,7 @@ brew install node
 
 **Manual download**
 
-Download the latest **Poke.macOS.Gate.dmg** from [Releases](https://github.com/f/poke-gate/releases), open it, and drag to Applications. Since the app is not notarized, you may need to run:
+Download the latest **Poke.macOS.Gate.dmg** from [Releases](https://github.com/alextyhwang/poke-gate/releases), open it, and drag to Applications. Since the app is not notarized, you may need to run:
 
 ```bash
 xattr -cr /Applications/Poke\ macOS\ Gate.app
@@ -63,7 +102,7 @@ If you just want to run poke-gate from the terminal without the menu bar app:
 npx poke-gate
 ```
 
-## Setup
+## Setup on macOS
 
 1. Open Poke Gate from your menu bar
 2. The **Setup View** guides you through choosing an access mode and granting Accessibility permission
@@ -78,7 +117,7 @@ flowchart TD
     A["You message Poke\nfrom iMessage / Telegram / SMS"] --> B["Poke Agent"]
     B --> C["Agent calls MCP tool"]
     C --> D["MCP Tunnel (WebSocket)"]
-    D --> E["Poke Gate on your Mac"]
+    D --> E["Poke Gate on your computer"]
     E --> F["Runs command / reads file / takes screenshot"]
     F --> D
     D --> B
@@ -98,6 +137,9 @@ Poke Gate runs a local MCP server and tunnels it to Poke's cloud. When you ask P
 | `list_directory` | List files and directories |
 | `system_info` | OS, hostname, architecture, uptime, memory |
 | `take_screenshot` | Capture the screen (requires Screen Recording permission) |
+| `run_agent` | Start an asynchronous Codex run (defaults to Documents) |
+| `get_agent_run` | Check a Codex run's status and output |
+| `cancel_agent_run` | Terminate a Codex run's process tree |
 
 ## Examples
 
@@ -116,7 +158,7 @@ The native SwiftUI menu bar app manages everything:
 
 - **First-run setup** — guided onboarding to choose an access mode and grant Accessibility permission
 - **Status** — green dot when connected, yellow when connecting, red on error
-- **Personalized** — shows "Connected to your Poke, [name]"
+- **Personalized** — shows "Connected to your Poke, name"
 - **Access mode** — switch between Full, Limited, and Sandbox from Settings or the popover
 - **Accessibility-first** — prompts for Accessibility permission (needed for automation) with live status updates
 - **Auto-start** — connects on launch if signed in via OAuth
@@ -131,7 +173,7 @@ The app runs in the menu bar only (no Dock icon). Quit is the only way to stop i
 Requires macOS 15+ and Xcode 26+.
 
 ```bash
-git clone https://github.com/f/poke-gate.git
+git clone https://github.com/alextyhwang/poke-gate.git
 cd poke-gate/clients/Poke\ macOS\ Gate
 open Poke\ macOS\ Gate.xcodeproj
 ```
@@ -242,7 +284,7 @@ Each agent file starts with a JSDoc-style frontmatter block:
  * @description Fetches messages from the last hour and sends a summary to Poke.
  * @interval 1h
  * @env BEEPER_TOKEN - Beeper Desktop local API token
- * @author f
+ * @author alextyhwang
  */
 ```
 
@@ -280,7 +322,7 @@ Poke Gate supports three access modes that control what your agent can do:
 |------|-------------|
 | **Full** (default) | All tools available with no approval required. The agent can run commands, write files, and take screenshots directly. |
 | **Limited** | Read-only tools plus a curated set of safe commands (`ls`, `cat`, `grep`, `curl`, etc.). `write_file` and `take_screenshot` are disabled. |
-| **Sandbox** | Broader command support than Limited, but writes are restricted to `~/Downloads` and `/tmp` via macOS `sandbox-exec`. |
+| **Sandbox** | Broader command support under an OS sandbox. Windows uses a restricted Low-integrity token and Job Object; macOS uses `sandbox-exec`. |
 
 Set the mode via CLI flag, environment variable, or the macOS app Settings:
 

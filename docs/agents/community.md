@@ -1,6 +1,6 @@
 # Community Agents
 
-Ready-to-use agents you can install with a single command. All agents are open source and included in the [Poke Gate repository](https://github.com/f/poke-gate/tree/main/examples/agents).
+Ready-to-use agents you can install with a single command. All agents are open source and included in the [Poke Gate repository](https://github.com/alextyhwang/poke-gate/tree/main/examples/agents).
 
 ## Beeper Message Digest
 

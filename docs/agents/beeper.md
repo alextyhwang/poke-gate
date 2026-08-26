@@ -98,10 +98,10 @@ Or use the macOS Agents editor.
  * @interval 1h
  * @env BEEPER_TOKEN - Beeper Desktop local API token (Settings > API)
  * @env BEEPER_BASE_URL - (optional) Override default http://localhost:23373
- * @author f
+ * @author alextyhwang
  */
 ```
 
 ## Source
 
-[View on GitHub](https://github.com/f/poke-gate/blob/main/examples/agents/beeper.1h.js)
+[View on GitHub](https://github.com/alextyhwang/poke-gate/blob/main/examples/agents/beeper.1h.js)

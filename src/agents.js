@@ -1,12 +1,11 @@
 import { readdirSync, readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { homedir } from "node:os";
 import { exec } from "node:child_process";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
+import { getPlatformPaths } from "./platform-paths.js";
 
-const CONFIG_DIR = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
-const AGENTS_DIR = join(CONFIG_DIR, "poke-gate", "agents");
+const { agentsDir: AGENTS_DIR } = getPlatformPaths();
 
 const MIN_INTERVAL_MS = 10 * 60 * 1000;
 
@@ -182,7 +181,7 @@ export async function runAgent(name) {
   await runAgentProcess(agent);
 }
 
-const REPO_BASE = "https://raw.githubusercontent.com/f/poke-gate/main/examples/agents";
+const REPO_BASE = "https://raw.githubusercontent.com/alextyhwang/poke-gate/main/examples/agents";
 
 export async function downloadAgent(name) {
   mkdirSync(AGENTS_DIR, { recursive: true });
@@ -223,7 +222,7 @@ export async function downloadAgent(name) {
 
   if (!jsContent) {
     console.error(`Agent "${name}" not found in the repository.`);
-    console.error(`Browse available agents: https://github.com/f/poke-gate/tree/main/examples/agents`);
+    console.error(`Browse available agents: https://github.com/alextyhwang/poke-gate/tree/main/examples/agents`);
     process.exit(1);
   }
 
@@ -236,7 +235,7 @@ export async function downloadAgent(name) {
 
   if (existsSync(envDest)) {
     console.log(`  .env.${envName} already exists, skipped.`);
-    console.log(`\n  Test it: npx poke-gate run-agent ${envName}`);
+    console.log(`\n  Test it: npx poke-gate run-scheduled-agent ${envName}`);
     return;
   }
 
@@ -261,7 +260,7 @@ export async function downloadAgent(name) {
     }
   }
 
-  console.log(`\n  Test it: npx poke-gate run-agent ${envName}`);
+  console.log(`\n  Test it: npx poke-gate run-scheduled-agent ${envName}`);
 }
 
 function parseEnvKeys(template) {
@@ -319,7 +318,7 @@ export function startAgentScheduler() {
   const agents = discoverAgents();
 
   if (agents.length === 0) {
-    log("No agents found. Add scripts to ~/.config/poke-gate/agents/");
+    log(`No agents found. Add scripts to ${AGENTS_DIR}`);
     return;
   }
 

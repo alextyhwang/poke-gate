@@ -1,7 +1,7 @@
 import { createHash, createHmac, randomUUID } from "node:crypto";
 
 const SAFE_TOOLS = new Set(["read_file", "read_image", "list_directory", "system_info"]);
-const RISKY_TOOLS = new Set(["run_command", "write_file", "take_screenshot"]);
+const RISKY_TOOLS = new Set(["run_command", "write_file", "take_screenshot", "run_agent", "cancel_agent_run"]);
 
 const TOKEN_TTL_MS = 5 * 60 * 1000;
 

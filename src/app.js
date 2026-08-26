@@ -4,11 +4,20 @@ import { startAgentScheduler, stopAgentScheduler } from "./agents.js";
 import { sendToWebhook } from "./webhook.js";
 import { ensurePokeAuthenticated } from "./poke-auth.js";
 import { execSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import net from "node:net";
+import { homedir } from "node:os";
+import { appendFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { getPlatformPaths } from "./platform-paths.js";
 
 const verbose = process.argv.includes("--verbose") || process.argv.includes("-v");
 enableLogging(verbose);
+const appPaths = getPlatformPaths();
+const logFile = process.env.POKE_GATE_LOG_FILE ||
+  (process.platform === "win32" ? join(appPaths.logsDir, "gateway.log") : null);
 
-function killExistingInstances() {
+function killExistingPosixInstances() {
   const myPid = process.pid;
   const ppid = process.ppid;
   try {
@@ -41,9 +50,39 @@ function killExistingInstances() {
   } catch {}
 }
 
+async function claimSingleInstance() {
+  if (process.platform !== "win32") {
+    killExistingPosixInstances();
+    return null;
+  }
+
+  const userKey = createHash("sha256").update(homedir()).digest("hex").slice(0, 16);
+  const pipeName = `\\\\.\\pipe\\poke-gate-${userKey}`;
+  const server = net.createServer((socket) => socket.end());
+
+  await new Promise((resolve, reject) => {
+    server.once("error", (error) => {
+      if (error.code === "EADDRINUSE") {
+        reject(new Error("Poke Gate is already running for this Windows user."));
+        return;
+      }
+      reject(error);
+    });
+    server.listen(pipeName, resolve);
+  });
+  return server;
+}
+
 function log(msg) {
   const ts = new Date().toISOString().slice(11, 19);
-  console.log(`[${ts}] ${msg}`);
+  const line = `[${ts}] ${msg}`;
+  console.log(line);
+  if (logFile) {
+    try {
+      mkdirSync(appPaths.logsDir, { recursive: true });
+      appendFileSync(logFile, `${new Date().toISOString()} ${msg}\n`, "utf8");
+    } catch {}
+  }
 }
 
 function sleep(ms) {
@@ -51,11 +90,15 @@ function sleep(ms) {
 }
 
 async function ensureAuthenticated() {
-  return ensurePokeAuthenticated({ onLogin: () => log("Signing in to Poke...") });
+  return ensurePokeAuthenticated({
+    onLogin: () => log("Signing in to Poke..."),
+    onBrowserLogin: (error) => log(`Device login unavailable (${error.message}); opening Chrome for Poke sign-in...`),
+  });
 }
 
 let currentTunnel = null;
 let reconnectWatchdog = null;
+let singleInstanceServer = null;
 
 async function connectWithRetry(mcpUrl, token) {
   let attempt = 0;
@@ -128,7 +171,7 @@ function scheduleReconnect(mcpUrl, token) {
 }
 
 async function main() {
-  killExistingInstances();
+  singleInstanceServer = await claimSingleInstance();
   log("poke-gate starting...");
   log(`Access mode: ${getPermissionMode()}`);
 
@@ -148,19 +191,22 @@ function buildAccessModeMessage(mode) {
       return (
         "Access mode: Limited. " +
         "You can read files, list directories, and run safe read-only commands (ls, cat, grep, curl, jq…). " +
-        "You cannot write files, take screenshots, or run other commands."
+        "You can also start Codex after an exact chat approval. You cannot write files, take screenshots, or run other commands."
       );
     case "sandbox":
       return (
         "Access mode: Sandbox. " +
-        "You can read files, list directories, and run commands like brew, node, python, ffmpeg, curl, and more. " +
-        "File writes are restricted to ~/Downloads and /tmp by macOS sandbox. Screenshots are disabled."
+        (process.platform === "win32"
+          ? "Allowed commands are PowerShell-AST validated and run under a Low-integrity restricted token and Job Object. "
+          : "You can read files, list directories, and run commands like brew, node, python, ffmpeg, curl, and more. " +
+            "File writes are restricted to Downloads and temporary files by the OS sandbox. ") +
+        "Codex can start after an exact chat approval. Screenshots are disabled."
       );
     default:
       return (
         "Access mode: Full. " +
-        "You can run any shell command, read files, list directories, take screenshots, and check system info — no approval needed. " +
-        "Only destructive actions (deleting files, rm, write_file) require a one-time approval; after that, everything is auto-approved for the session."
+        "You can run shell commands, read files, list directories, take screenshots, and check system info. " +
+        "Destructive commands, file writes, and Codex launches require an exact signed approval unless the user explicitly remembers broader approval for the session."
       );
   }
 }
@@ -182,13 +228,23 @@ async function notifyPoke(connectionId) {
 
 process.on("SIGINT", () => {
   log("Shutting down...");
+  singleInstanceServer?.close();
   process.exit(0);
 });
 
 process.on("SIGTERM", () => {
   log("Shutting down...");
+  singleInstanceServer?.close();
   process.exit(0);
 });
+
+if (process.platform === "win32") {
+  process.on("SIGBREAK", () => {
+    log("Shutting down...");
+    singleInstanceServer?.close();
+    process.exit(0);
+  });
+}
 
 process.on("uncaughtException", (err) => {
   log(`Uncaught exception: ${err.message}`);

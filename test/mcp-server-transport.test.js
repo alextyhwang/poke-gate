@@ -50,6 +50,42 @@ test("MCP POST responses include session id header", async () => {
   }
 });
 
+test("run_agent advertises Codex prompt semantics and requires approval", async () => {
+  const { httpServer, port } = await startMcpServer();
+  try {
+    const listResponse = await request({
+      port,
+      method: "POST",
+      path: "/mcp",
+      headers: { "Content-Type": "application/json", "Mcp-Session-Id": "agent-session" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+    });
+    const tools = JSON.parse(listResponse.body).result.tools;
+    const runAgent = tools.find((tool) => tool.name === "run_agent");
+    assert.deepEqual(runAgent.inputSchema.required, ["prompt"]);
+    assert.match(runAgent.description, /Codex/);
+    assert.equal(tools.some((tool) => tool.name === "get_agent_run"), true);
+
+    const callResponse = await request({
+      port,
+      method: "POST",
+      path: "/mcp",
+      headers: { "Content-Type": "application/json", "Mcp-Session-Id": "agent-session" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: { name: "run_agent", arguments: { prompt: "Summarize my documents" } },
+      }),
+    });
+    const approval = JSON.parse(callResponse.body).result;
+    assert.equal(approval.structuredContent.status, "AWAITING_APPROVAL");
+    assert.match(approval.structuredContent.summary, /Start Codex in Documents/);
+  } finally {
+    httpServer.close();
+  }
+});
+
 test("MCP GET supports event stream transport", async () => {
   const { httpServer, port } = await startMcpServer();
   try {

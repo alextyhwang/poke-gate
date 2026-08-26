@@ -58,7 +58,7 @@ Each agent starts with a JSDoc-style frontmatter block:
  * @description Fetches messages from the last hour and sends a summary.
  * @interval 1h
  * @env BEEPER_TOKEN - Beeper Desktop local API token
- * @author f
+ * @author alextyhwang
  */
 ```
 

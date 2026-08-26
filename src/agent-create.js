@@ -1,10 +1,8 @@
 import { Poke, getToken, isLoggedIn, login } from "poke";
-import { join } from "node:path";
-import { homedir } from "node:os";
 import { createInterface } from "node:readline";
+import { getPlatformPaths } from "./platform-paths.js";
 
-const CONFIG_DIR = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
-const AGENTS_DIR = join(CONFIG_DIR, "poke-gate", "agents");
+const { agentsDir: AGENTS_DIR } = getPlatformPaths();
 
 const SYSTEM_PROMPT = `Generate a Poke Gate agent based on my description below.
 

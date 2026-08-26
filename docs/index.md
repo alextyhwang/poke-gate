@@ -14,7 +14,7 @@ hero:
       link: /getting-started
     - theme: alt
       text: View on GitHub
-      link: https://github.com/f/poke-gate
+      link: https://github.com/alextyhwang/poke-gate
 
 features:
 - icon: 🖥️
@@ -56,7 +56,7 @@ npx poke-gate
 
 ```bash [Manual]
 # Download from GitHub Releases
-# https://github.com/f/poke-gate/releases/latest
+# https://github.com/alextyhwang/poke-gate/releases/latest
 ```
 
 :::

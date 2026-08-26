@@ -96,7 +96,7 @@ The app connects automatically on launch if you've previously signed in. If the 
 Requires macOS 15+ and Xcode 16+.
 
 ```bash
-git clone https://github.com/f/poke-gate.git
+git clone https://github.com/alextyhwang/poke-gate.git
 cd poke-gate/clients/Poke\ macOS\ Gate
 open Poke\ macOS\ Gate.xcodeproj
 ```

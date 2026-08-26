@@ -21,7 +21,7 @@ Controls which tools your Poke agent can use. Defaults to `full` if not specifie
 |------|-------------|
 | `full` | All tools available, subject to chat approval for risky actions |
 | `limited` | Safe tools and a curated set of read-only commands only |
-| `sandbox` | Broader command support, but writes are restricted by macOS `sandbox-exec` policies |
+| `sandbox` | Broader command support under the native Windows restricted-token host or macOS `sandbox-exec` |
 
 You can also set the mode via the `POKE_GATE_PERMISSION_MODE` environment variable. The `--mode` flag takes precedence.
 
@@ -45,18 +45,22 @@ Shows real-time tool calls:
 ## Run an agent
 
 ```bash
-npx poke-gate run-agent <name>
+npx poke-gate run-agent [--cwd <directory>] "<prompt>"
 ```
 
-Runs a single agent script immediately and exits. Useful for testing.
+Starts `codex exec`, waits for it to finish, prints its final response, and exits. The working directory defaults to Documents.
 
 **Example:**
 
 ```bash
-npx poke-gate run-agent beeper
+npx poke-gate run-agent "Summarize the documents in this folder"
 ```
 
-Finds `~/.config/poke-gate/agents/beeper.*.js` and runs it with the env from `.env.beeper`.
+The former scheduled-script behavior is still available during migration:
+
+```bash
+npx poke-gate run-scheduled-agent beeper
+```
 
 ## Generate an agent with AI
 
@@ -120,7 +124,7 @@ If Chrome is not installed in a standard location, set `POKE_GATE_CHROME` to a C
 npx poke-gate agent get <name>
 ```
 
-Downloads an agent from the [community repository](https://github.com/f/poke-gate/tree/main/examples/agents) and saves it to `~/.config/poke-gate/agents/`.
+Downloads an agent from the [community repository](https://github.com/alextyhwang/poke-gate/tree/main/examples/agents) and saves it to `~/.config/poke-gate/agents/`.
 
 If the agent has an `.env` file, you'll be prompted to fill in the values:
 
@@ -134,7 +138,7 @@ Fetching agent "beeper" from GitHub...
 
   Saved: ~/.config/poke-gate/agents/.env.beeper
 
-  Test it: npx poke-gate run-agent beeper
+  Test it: npx poke-gate run-scheduled-agent beeper
 ```
 
 ## Environment variables
@@ -146,3 +150,6 @@ Fetching agent "beeper" from GitHub...
 | `POKE_API_KEY` | Override the API key (skips OAuth) |
 | `POKE_API` | Override the Poke API base URL |
 | `POKE_FRONTEND` | Override the Poke frontend URL |
+| `POKE_GATE_CODEX_PATH` | Override the Codex executable; Windows otherwise discovers T3/Codex installs |
+| `POKE_GATE_WINDOWS_HOST` | Override the native Windows security-host executable |
+| `POKE_GATE_DOCUMENTS_DIR` | Override the Documents known-folder fallback |

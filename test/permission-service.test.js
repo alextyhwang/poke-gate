@@ -24,6 +24,8 @@ test("safe and risky tool classification", () => {
   assert.equal(service.isRisky("run_command"), true);
   assert.equal(service.isRisky("write_file"), true);
   assert.equal(service.isRisky("take_screenshot"), true);
+  assert.equal(service.isRisky("run_agent"), true);
+  assert.equal(service.isRisky("cancel_agent_run"), true);
 });
 
 test("session whitelist match", () => {

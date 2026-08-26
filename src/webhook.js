@@ -1,11 +1,11 @@
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import { Poke } from "poke";
 import { getPokeAuthToken } from "./poke-auth.js";
+import { getPlatformPaths } from "./platform-paths.js";
 
-const CONFIG_DIR = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
-const STATE_PATH = join(CONFIG_DIR, "poke-gate", "state.json");
+const { configDir: CONFIG_DIR } = getPlatformPaths();
+const STATE_PATH = join(CONFIG_DIR, "state.json");
 
 export function loadState() {
   try {
@@ -16,7 +16,7 @@ export function loadState() {
 }
 
 export function saveState(state) {
-  mkdirSync(join(CONFIG_DIR, "poke-gate"), { recursive: true });
+  mkdirSync(CONFIG_DIR, { recursive: true });
   writeFileSync(STATE_PATH, JSON.stringify(state, null, 2));
 }
 

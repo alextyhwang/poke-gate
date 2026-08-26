@@ -25,7 +25,8 @@ Only safe, read-only tools are available:
 
 Broader command support than Limited, plus commands like `brew`, `node`, `python`, `ffmpeg`, `mkdir`, `cp`, `mv`:
 
-- `run_command` uses macOS `sandbox-exec` to restrict file writes to `~/Downloads` and `/tmp`
+- Windows parses PowerShell through its native AST, disables token privileges, applies Low integrity, and owns the process tree with a kill-on-close Job Object
+- Windows permits temporary writes only in `%LOCALAPPDATA%\Poke Gate\sandbox`; macOS uses `sandbox-exec` write rules
 - `write_file` and `take_screenshot` are **disabled**
 - Dangerous patterns are always blocked
 
@@ -48,7 +49,7 @@ POKE_GATE_PERMISSION_MODE=sandbox npx poke-gate
 
 ## Tool approval flow
 
-In **limited** and **sandbox** modes, risky tools (`run_command`, `write_file`, `take_screenshot`) use an HMAC-signed approval flow:
+In **limited** and **sandbox** modes, risky tools (`run_command`, `run_agent`, and `cancel_agent_run`) use an HMAC-signed approval flow. Disabled tools remain unavailable:
 
 1. The agent calls the tool — Poke Gate returns `AWAITING_APPROVAL` with a signed token
 2. The agent asks you in chat to approve
@@ -61,7 +62,8 @@ In **full** mode, all tools execute directly without approval.
 
 - **Authentication** — only your Poke agent (authenticated via Poke OAuth) can reach the tunnel
 - **Tunnel isolation** — the MCP server only listens on `127.0.0.1` (localhost), not exposed to the network
-- **Chat approval** — risky tools require explicit approval before execution (in full mode)
+- **Chat approval** — destructive commands, writes, and Codex launches require an exact signed approval; restricted modes also approve allowed commands
+- **Windows native containment** — restricted modes combine PowerShell AST validation, a Low-integrity restricted token, and Job Object process-tree ownership
 - **Access policies** — limited and sandbox modes enforce strict command allowlists
 - **Loop guard** — duplicate or recently-failed commands are suppressed to prevent runaway retries
 - **No persistent access** — quitting Poke Gate closes the tunnel and deletes the connection
@@ -78,4 +80,4 @@ In **full** mode, all tools execute directly without approval.
 
 ## Reporting issues
 
-If you discover a security vulnerability, please email [security@fka.dev](mailto:security@fka.dev) instead of opening a public issue.
+If you discover a security vulnerability, use the repository's [private security advisory form](https://github.com/alextyhwang/poke-gate/security/advisories/new) instead of opening a public issue.

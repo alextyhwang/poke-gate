@@ -2,8 +2,9 @@ import { execFileSync, spawn } from 'node:child_process';
 import { randomBytes, createHash } from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
-import os from 'node:os';
 import path from 'node:path';
+import { getPlatformPaths } from './platform-paths.js';
+import { terminateChildProcessTree } from './process-control.js';
 
 const DEFAULT_FRONTEND = 'https://poke.com';
 const SESSION_COOKIE_PATTERN = /^INTERACTION_.*_SESSION_TOKEN$/;
@@ -26,34 +27,45 @@ function pathExists(filePath) {
   }
 }
 
-function which(command) {
+function findOnPath(command, env = process.env, currentPlatform = process.platform) {
   try {
-    return execFileSync('which', [command], {
+    const executable = currentPlatform === 'win32' ? 'where.exe' : 'which';
+    const result = execFileSync(executable, [command], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
+      env,
+      windowsHide: true,
     }).trim();
+    return result.split(/\r?\n/).find(Boolean) ?? null;
   } catch {
     return null;
   }
 }
 
-export function findChromiumBrowser(env = process.env) {
+export function findChromiumBrowser(env = process.env, currentPlatform = process.platform) {
   if (env.POKE_GATE_CHROME && pathExists(env.POKE_GATE_CHROME)) {
     return env.POKE_GATE_CHROME;
   }
 
-  const candidates = [
+  const windowsRoots = [env.PROGRAMFILES, env['PROGRAMFILES(X86)'], env.LOCALAPPDATA].filter(Boolean);
+  const windowsCandidates = windowsRoots.flatMap((root) => [
+    path.win32.join(root, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+    path.win32.join(root, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+    path.win32.join(root, 'BraveSoftware', 'Brave-Browser', 'Application', 'brave.exe'),
+  ]);
+  const unixCandidates = [
     '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
     '/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary',
     '/Applications/Chromium.app/Contents/MacOS/Chromium',
     '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
     '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
-    which('google-chrome-stable'),
-    which('google-chrome'),
-    which('chromium'),
-    which('chromium-browser'),
-    which('microsoft-edge'),
-    which('brave-browser'),
+  ];
+  const commandNames = currentPlatform === 'win32'
+    ? ['chrome.exe', 'msedge.exe', 'brave.exe']
+    : ['google-chrome-stable', 'google-chrome', 'chromium', 'chromium-browser', 'microsoft-edge', 'brave-browser'];
+  const candidates = [
+    ...(currentPlatform === 'win32' ? windowsCandidates : unixCandidates),
+    ...commandNames.map((command) => findOnPath(command, env, currentPlatform)),
   ].filter(Boolean);
 
   return candidates.find(pathExists) ?? null;
@@ -438,7 +450,8 @@ export async function getPokeBrowserSessionToken({
   }
 
   const port = await getFreePort();
-  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'poke-gate-auth-'));
+  const userDataDir = getPlatformPaths({ env }).authBrowserProfileDir;
+  fs.mkdirSync(userDataDir, { recursive: true });
   const frontend = getFrontend(env);
   const authUrl = `${frontend}/settings/advanced`;
 
@@ -477,9 +490,6 @@ export async function getPokeBrowserSessionToken({
 
     throw new Error('Timed out waiting for Poke browser sign-in.');
   } finally {
-    if (!browser.killed) {
-      browser.kill('SIGTERM');
-    }
-    setTimeout(() => fs.rmSync(userDataDir, { recursive: true, force: true }), 1_000).unref();
+    terminateChildProcessTree(browser);
   }
 }

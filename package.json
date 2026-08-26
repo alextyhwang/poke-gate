@@ -10,6 +10,8 @@
     "start": "node src/app.js",
     "test": "node --test",
     "test:watch": "node --test --watch",
+    "measure:idle": "node --expose-gc scripts/measure-idle.js",
+    "smoke:windows": "node scripts/windows-smoke.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "lint:md": "remark . --quiet --frail",
@@ -27,7 +29,15 @@
     "remote",
     "os"
   ],
-  "author": "",
+  "author": "Alex Wang (https://github.com/alextyhwang)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alextyhwang/poke-gate.git"
+  },
+  "bugs": {
+    "url": "https://github.com/alextyhwang/poke-gate/issues"
+  },
+  "homepage": "https://github.com/alextyhwang/poke-gate#readme",
   "license": "MIT",
   "engines": {
     "node": ">=18"
