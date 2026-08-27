@@ -19,6 +19,14 @@ The default install:
 - uses Limited mode unless `-PermissionMode full` or `-PermissionMode sandbox` is supplied;
 - does not start immediately unless `-StartNow` is supplied.
 
+On a trusted personal computer, install or update the task in Full mode with:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-windows.ps1 -PermissionMode full -StartNow
+```
+
+Full mode exposes every tool, while destructive commands, file writes, and Codex launches retain signed approval checks unless the user remembers broader approval for the current session.
+
 Add `-InstallTray $true` to register the optional C# notification-area controller. It can start or stop the gateway and open `%LOCALAPPDATA%\Poke Gate\logs`. It is off by default because the measured tray footprint would push the combined idle working set above the release budget.
 
 The installer prefers a system Node installation, then a bundled `runtime\windows-x64\node.exe`, then a Codex-managed Node runtime. It copies the selected executable into Poke Gate's own data directory, so later T3 Code updates cannot invalidate the startup task.
@@ -49,7 +57,8 @@ Measurements on Alayna's Windows 11 x64 computer (16 GiB RAM, Node 24.19):
 | --- | ---: | ---: | ---: |
 | Bare Node runtime | 54.7 MiB | 18.1 MiB | no sampled growth |
 | Loaded MCP gateway, 60-second sample | 65.2 MiB steady / 67.3 MiB peak | 30.2 MiB peak | effectively 0% after warm-up |
+| Connected Full-mode gateway with Poke SDK 4.0.461, 60-second sample | 58.1–58.2 MiB | 61.5–61.6 MiB | 0% across 12 samples |
 | Optional native C# tray | 28.5 MiB peak | 21.9 MiB peak | 0% sampled |
 | One read-only Codex run | 142.4 MiB peak | 80.6 MiB peak | on-demand only; exited after 7.1 s |
 
-The default background-only Node design passes the 80 MiB working-set and 64 MiB private-memory targets. A resident Rust rewrite is not justified by current measurements. If a tray is required while retaining the 80 MiB combined limit, replace only the C# tray with a Rust/Win32 controller. A five-minute connected sample and 24-hour soak remain release gates.
+The current Full-mode worker also held 13–15 threads and 249–251 handles. The background-only Node design passes the 80 MiB working-set and 64 MiB private-memory targets, although the current private-memory result is close to the latter. A resident Rust rewrite is not justified by current measurements. If a tray is required while retaining the 80 MiB combined limit, replace only the C# tray with a Rust/Win32 controller. A five-minute connected sample and 24-hour soak remain release gates.

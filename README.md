@@ -32,6 +32,14 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-window
 
 This installs a private runtime and native security host under `%LOCALAPPDATA%\Poke Gate`, then registers a per-user background task at sign-in. Add `-StartNow` to start it immediately or `-InstallTray $true` for the optional notification-area controller. See [Windows deployment](docs/windows.md) for security and measured resource use.
 
+For a trusted personal computer where Poke should have every advertised tool, opt into Full mode explicitly:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-windows.ps1 -PermissionMode full -StartNow
+```
+
+Full mode enables commands, writes, screenshots, and Codex. Poke Gate still requires signed approval for destructive commands, file writes, and Codex launches unless broader approval has been remembered for that session.
+
 ### Connect or reconnect on Windows
 
 The installer registers a per-user task that reconnects automatically whenever you sign in. To start it manually:
@@ -320,7 +328,7 @@ Poke Gate supports three access modes that control what your agent can do:
 
 | Mode | Description |
 |------|-------------|
-| **Full** (default) | All tools available with no approval required. The agent can run commands, write files, and take screenshots directly. |
+| **Full** (CLI default; Windows opt-in) | Every tool is enabled. Destructive commands, file writes, and Codex launches retain signed approval checks unless broader session approval is remembered. |
 | **Limited** | Read-only tools plus a curated set of safe commands (`ls`, `cat`, `grep`, `curl`, etc.). `write_file` and `take_screenshot` are disabled. |
 | **Sandbox** | Broader command support under an OS sandbox. Windows uses a restricted Low-integrity token and Job Object; macOS uses `sandbox-exec`. |
 
@@ -331,6 +339,8 @@ npx poke-gate --mode sandbox
 # or
 POKE_GATE_PERMISSION_MODE=limited npx poke-gate
 ```
+
+Alayna's Windows deployment runs in Full mode. A connected 60-second idle sample on August 26, 2026 measured 58.1–58.2 MiB working set, 61.5–61.6 MiB private memory, 13–15 threads, 249–251 handles, and no measurable CPU time across 12 five-second samples. That is about 0.36% of the computer's 16 GiB RAM and does not justify a resident Rust rewrite.
 
 ## Security
 
